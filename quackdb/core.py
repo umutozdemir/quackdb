@@ -135,29 +135,10 @@ def read_parquet_sma(
             tables.append(stats['outliers'])
         else:
             # t = internal_duckdb_query(p, projection, column, op, threshold, con)
-            t = con.execute(raw_sql).arrow() 
+            t = con.sql(raw_sql).arrow()
             if t.num_rows > 0:
                 tables.append(t)
 
     if not tables:
         return []
     return pa.concat_tables(tables, promote=True)
-
-
-def internal_duckdb_query(
-    path: str,
-    projection: Optional[List[str]],
-    column: str,
-    op: str,
-    threshold: float,
-    con: 'duckdb.DuckDBPyConnection'
-) -> pa.Table:
-    sel = '*'
-    if projection:
-        sel = ', '.join(f'"{c}"' for c in projection)
-        sql = (
-            f"SELECT {sel}"
-            f" FROM read_parquet('{path}')"
-            f" WHERE \"{column}\" {op} {threshold}"
-        )
-    return con.execute(sql).arrow() 
