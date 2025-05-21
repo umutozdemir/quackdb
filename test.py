@@ -2,6 +2,7 @@ import quackdb
 import duckdb
 import time
 
+
 # Calculate outlier thresholds using DuckDB
 con = duckdb.connect()
 sql = """
