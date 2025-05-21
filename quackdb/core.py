@@ -1,16 +1,28 @@
 import os, pickle, math
-import time
+import threading
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 import duckdb
-import numpy as np
 from typing import Optional, Dict, Any, List
 
 # configure base folder for .sma files
 # BASE_FOLDER = os.environ.get('QUACKDB_SMA_FOLDER', os.path.expanduser('~/.quackdb/sma'))
 BASE_FOLDER = os.path.expanduser('~/Desktop/theses/data/sma')
 os.makedirs(BASE_FOLDER, exist_ok=True)
+
+
+def get_sma(
+    path: str,
+    column: str,
+    ext: str = ".sma"
+) -> Optional[Dict[str, Any]]:
+    base = os.path.splitext(os.path.basename(path))[0]
+    sma_file = os.path.join(BASE_FOLDER, f"{base}_{column}{ext}")
+    # if sma file exists for given column, return it
+    if os.path.exists(sma_file):
+        with open(sma_file, 'rb') as f:
+            return pickle.load(f)
 
 
 def build_sma(
@@ -21,11 +33,7 @@ def build_sma(
 ) -> Optional[Dict[str, Any]]:
     base = os.path.splitext(os.path.basename(path))[0]
     sma_file = os.path.join(BASE_FOLDER, f"{base}_{column}{ext}")
-    # if sma file exists for given column, return it
-    if os.path.exists(sma_file):
-        with open(sma_file, 'rb') as f:
-            return pickle.load(f)
-        
+
     # read only given column
     tbl = pq.read_table(path, columns=[column])
     arr: pa.ChunkedArray = tbl[column]
@@ -85,21 +93,40 @@ def read_parquet_sma(
     column: str,
     op: str,
     threshold: float,
+    raw_sql: str,
     con: 'duckdb.DuckDBPyConnection'
 ) -> pa.Table:
     tables: List[pa.Table] = []
+    
+    def build_sma_concurrently(path: str, col: str):
+        try:
+            build_sma(path, col)
+        except Exception as e:
+            print(f"Error building SMA for {path}: {e}")
+
     for p in paths:
-        stats = build_sma(p, column)
+        stats = get_sma(p, column)
         if stats is None:
+            print('Building SMA concurrently for', p)
+            # Start building SMA in background
+            thread = threading.Thread(target=build_sma_concurrently, args=(p, column))
+            thread.daemon = False  # Thread will be killed when main program exits
+            thread.start()
+            
+            # Proceed with DuckDB query immediately
+            # t = internal_duckdb_query(p, projection, column, op, threshold, con, raw_sql)
+            t = con.execute(raw_sql).arrow() 
+            if t.num_rows > 0:
+                tables.append(t)
             continue
-        # skip
+        # file skipping check
         if (
             (op == '>' and threshold > stats['max']) or
             (op == '<' and threshold < stats['min'])
         ):
             print('Skipping', p)
             continue
-        # outlier-only branch
+        # outlier-only check
         if (
             (op == '>' and threshold > stats['upper_threshold']) or
             (op == '<' and threshold < stats['lower_threshold'])
@@ -107,18 +134,30 @@ def read_parquet_sma(
             print('Outlier detected', p)
             tables.append(stats['outliers'])
         else:
-            # print('Regular DuckDB scan', p)
-            sel = '*'
-            if projection:
-                sel = ', '.join(f'"{c}"' for c in projection)
-            sql = (
-                f"SELECT {sel}"
-                f" FROM read_parquet('{p}')"
-                f" WHERE \"{column}\" {op} {threshold}"
-            )
-            t = con.execute(sql).arrow()
+            # t = internal_duckdb_query(p, projection, column, op, threshold, con)
+            t = con.execute(raw_sql).arrow() 
             if t.num_rows > 0:
                 tables.append(t)
+
     if not tables:
         return []
     return pa.concat_tables(tables, promote=True)
+
+
+def internal_duckdb_query(
+    path: str,
+    projection: Optional[List[str]],
+    column: str,
+    op: str,
+    threshold: float,
+    con: 'duckdb.DuckDBPyConnection'
+) -> pa.Table:
+    sel = '*'
+    if projection:
+        sel = ', '.join(f'"{c}"' for c in projection)
+        sql = (
+            f"SELECT {sel}"
+            f" FROM read_parquet('{path}')"
+            f" WHERE \"{column}\" {op} {threshold}"
+        )
+    return con.execute(sql).arrow() 

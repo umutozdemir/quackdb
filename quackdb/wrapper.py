@@ -14,7 +14,7 @@ def sql(query: str, return_arrow: bool = True) -> pa.Table:
     if parts:
         files, proj, col, op, val = parts
         if col and op and val is not None:
-            return read_parquet_sma(files, proj, col, op, val, _conn)   
+            return read_parquet_sma(files, proj, col, op, val, raw_sql=query, con=_conn)   
     # fallback to native DuckDB
     rel = _conn.execute(query)
     if return_arrow:
