@@ -5,7 +5,7 @@ from .utils import extract_query_parts
 
 _conn = duckdb.connect()
 
-def sql(query: str, return_arrow: bool = True) -> pa.Table:
+def sql(query: str) -> pa.Table:
     """
     Run SQL through DuckDB, but intercept Parquet queries to apply SMA skipping/outliers.
     Returns a pyarrow.Table by default.
@@ -14,12 +14,11 @@ def sql(query: str, return_arrow: bool = True) -> pa.Table:
     if parts:
         files, proj, col, op, val = parts
         if col and op and val is not None:
-            return read_parquet_sma(files, proj, col, op, val, raw_sql=query, con=_conn)   
-    # fallback to native DuckDB
-    rel = _conn.execute(query)
-    if return_arrow:
-        return rel.arrow()
-    return rel.df()
+            return read_parquet_sma(files, proj, col, op, val, raw_sql=query, con=_conn)
+        else:
+            raise ValueError("Query can not be executed")
+    else:
+        raise ValueError("Query can not be parsed")
 
 # convenience alias
 query = sql

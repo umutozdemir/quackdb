@@ -121,8 +121,8 @@ def read_parquet_sma(
     n_file_completely_skipped = 0
     n_file_read_from_outliers = 0
 
-    tables: List[pa.Table] = []
     res = None
+    paths_to_scan_fully = []
     
     def build_sma_concurrently(path: str, col: str, op: str):
         try:
@@ -139,11 +139,7 @@ def read_parquet_sma(
             thread.daemon = False  # Thread wont be killed when program exits
             thread.start()
             
-            # Proceed with DuckDB query immediately
-            if res is None:
-                res = con.sql(raw_sql)
-            else:
-                res = res.union(con.sql(raw_sql))
+            paths_to_scan_fully.append(p)
             continue
         # file skipping check
         if (
@@ -172,8 +168,15 @@ def read_parquet_sma(
                 res = res.union(outliers)
             n_file_read_from_outliers += 1
         else:
-            if res is None:
-                res = con.sql(raw_sql)
-            else:
-                res = res.union(con.sql(raw_sql))
+            paths_to_scan_fully.append(p)
+   
+    if len(paths_to_scan_fully) == 0:
+        return res
+    # scan files that cannot be skipped
+    p_sql = f'SELECT {", ".join(projection)} FROM read_parquet({paths_to_scan_fully}) WHERE {column} {op} {threshold}'
+    if res is None:
+        res = con.sql(p_sql)
+    else:
+        res = res.union(con.sql(p_sql))
+
     return res

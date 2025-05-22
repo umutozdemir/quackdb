@@ -4,7 +4,7 @@ from typing import Optional, List, Tuple
 # Regex to extract projection, parquet files, and predicate
 _SELECT = re.compile(r"SELECT\s+(.*?)\s+FROM", re.IGNORECASE)
 _FROM_PQ = re.compile(
-    r"FROM\s+'([^']+\.parquet)'(?:\s*,\s*'([^']+\.parquet)')*",
+    r"FROM\s+read_parquet\(\[(?:'([^']+\.parquet)'(?:,\s*'([^']+\.parquet)')*)\]\)",
     re.IGNORECASE
 )
 _WHERE = re.compile(
