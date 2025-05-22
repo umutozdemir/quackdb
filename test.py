@@ -102,8 +102,7 @@ def test_with_multiple_files_and_outlier_predicate():
     print(f"QuackDB row count: {len(quackdb_res)}")
     print(f"DuckDB row count: {len(duckdb_res)}")
 
-
-test_with_multiple_files_and_not_skipped_predicate()
+# test_with_multiple_files_and_not_skipped_predicate()
 # test_with_outlier_predicate()
 # test_with_min_max_skipped_predicate()
 # test_with_not_skipped_predicate()
