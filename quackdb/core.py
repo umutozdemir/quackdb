@@ -1,10 +1,10 @@
 import os, pickle, math
 import threading
 
-import pyarrow.compute as pc
 import pyarrow as pa
 import pyarrow.parquet as pq
 import duckdb
+from duckdb import DuckDBPyRelation
 from typing import Optional, Dict, Any, List
 
 # configure base folder for .sma files
@@ -22,7 +22,7 @@ def get_sma(
 ) -> Optional[Dict[str, Any]]:
     base = os.path.splitext(os.path.basename(path))[0]
     sma_file = os.path.join(BASE_FOLDER, f"{base}_{column}_{op}_{threshold}{ext}")
-    # if sma file exists for given column, return it
+    # if sma file exists for given predicate, return it
     if os.path.exists(sma_file):
         with open(sma_file, 'rb') as f:
             return pickle.load(f)
@@ -33,8 +33,7 @@ def build_sma(
     column: str,
     op: str,
     threshold: float,
-    iqr_mult: float = 1.5,
-    ext: str = ".sma"
+    ext: str = ".sma",
 ) -> Optional[Dict[str, Any]]:
     base = os.path.splitext(os.path.basename(path))[0]
     sma_file = os.path.join(BASE_FOLDER, f"{base}_{column}_{op}_{threshold}{ext}")
@@ -57,14 +56,16 @@ def build_sma(
     # find outliers
     vals.sort()
     n = len(vals)
+
     def quantile(p: float) -> float:
         idx = p * (n - 1)
-        lo, hi = math.floor(idx), math.ceil(idx)
-        return vals[lo] + (idx - lo) * (vals[hi] - vals[lo])
+        low, high = math.floor(idx), math.ceil(idx)
+        return vals[low] + (idx - low) * (vals[high] - vals[low])
+    
     q1, q3 = quantile(0.25), quantile(0.75)
     iqr = q3 - q1
-    lo_thr = q1 - iqr_mult * iqr
-    hi_thr = q3 + iqr_mult * iqr
+    lower_bound = q1 - 1.5 * iqr
+    upper_bound = q3 + 1.5 * iqr
 
     # identify and filter outlier row indices
     outlier_indices: List[int] = []
@@ -73,7 +74,7 @@ def build_sma(
         py = chunk.to_numpy()
         for i, v in enumerate(py):
             # check null and outlier conditions
-            if v is not None and (v < lo_thr or v > hi_thr):
+            if v is not None and (v < lower_bound or v > upper_bound):
                 # check if outlier satisfies the predicate
                 if op == '>' and v > threshold:
                     outlier_indices.append(row + i)
@@ -91,13 +92,13 @@ def build_sma(
     
     # extract outlier rows with all columns included
     idx_arr = pa.array(outlier_indices, type=pa.int64())
-    outlier_table = tbl.take(idx_arr)
-    
+    outlier_table = tbl.take(idx_arr) 
+
     stats = {
         "min": vals[0],
         "max": vals[-1],
-        "lower_threshold": lo_thr,
-        "upper_threshold": hi_thr,
+        "lower_threshold": lower_bound,
+        "upper_threshold": upper_bound,
         "outlier_indices": outlier_indices,
         "outliers": outlier_table,
     }
@@ -116,13 +117,14 @@ def read_parquet_sma(
     threshold: float,
     raw_sql: str,
     con: 'duckdb.DuckDBPyConnection'
-) -> pa.Table:
+) -> DuckDBPyRelation:
     n_file_completely_skipped = 0
     n_file_read_from_outliers = 0
 
     tables: List[pa.Table] = []
+    res = None
     
-    def build_sma_concurrently(path: str, col: str, op: str, threshold: float):
+    def build_sma_concurrently(path: str, col: str, op: str):
         try:
             build_sma(path, col, op, threshold)
         except Exception as e:
@@ -132,15 +134,16 @@ def read_parquet_sma(
         stats = get_sma(p, column, op, threshold)
         if stats is None:
             print('Building SMA concurrently for', p)
-            # Start building SMA in background
-            thread = threading.Thread(target=build_sma_concurrently, args=(p, column, op, threshold))
+            # build SMA concurrently
+            thread = threading.Thread(target=build_sma_concurrently, args=(p, column, op))
             thread.daemon = False  # Thread wont be killed when program exits
             thread.start()
             
             # Proceed with DuckDB query immediately
-            t = con.sql(raw_sql).arrow() 
-            if t.num_rows > 0:
-                tables.append(t)
+            if res is None:
+                res = con.sql(raw_sql)
+            else:
+                res = res.union(con.sql(raw_sql))
             continue
         # file skipping check
         if (
@@ -161,14 +164,16 @@ def read_parquet_sma(
             # apply projection if specified
             if projection:
                 out_tbl = out_tbl.select(projection)
-            
-            tables.append(out_tbl)
+            outliers = con.from_arrow(out_tbl)
+
+            if res is None:
+                res = outliers
+            else:
+                res = res.union(outliers)
             n_file_read_from_outliers += 1
         else:
-            t = con.sql(raw_sql).arrow()
-            if t.num_rows > 0:
-                tables.append(t)
-
-    if not tables:
-        return []
-    return pa.concat_tables(tables)
+            if res is None:
+                res = con.sql(raw_sql)
+            else:
+                res = res.union(con.sql(raw_sql))
+    return res
