@@ -115,7 +115,6 @@ def read_parquet_sma(
     column: str,
     op: str,
     threshold: float,
-    raw_sql: str,
     con: 'duckdb.DuckDBPyConnection'
 ) -> DuckDBPyRelation:
     n_file_completely_skipped = 0

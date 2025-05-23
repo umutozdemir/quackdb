@@ -14,7 +14,7 @@ def sql(query: str) -> pa.Table:
     if parts:
         files, proj, col, op, val = parts
         if col and op and val is not None:
-            return read_parquet_sma(files, proj, col, op, val, raw_sql=query, con=_conn)
+            return read_parquet_sma(files, proj, col, op, val, con=_conn)
         else:
             raise ValueError("Query can not be executed")
     else:
