@@ -28,7 +28,7 @@ def get_sma(
     ext: str = ".sma"
 ) -> Optional[Dict[str, Any]]:
     base = os.path.splitext(os.path.basename(path))[0]
-    sma_file = os.path.join(BASE_FOLDER, f"{base}_{column}_{op}_{threshold}{ext}")
+    sma_file = os.path.join(BASE_FOLDER, f"{base}.parquet_{column}_{op}_{threshold}{ext}")
     # if sma file exists for given predicate, return it
     if os.path.exists(sma_file):
         with open(sma_file, 'rb') as f:
@@ -43,7 +43,7 @@ def build_sma(
     ext: str = ".sma",
 ) -> Optional[Dict[str, Any]]:
     base = os.path.splitext(os.path.basename(path))[0]
-    sma_file = os.path.join(BASE_FOLDER, f"{base}_{column}_{op}_{threshold}{ext}")
+    sma_file = os.path.join(BASE_FOLDER, f"{base}.parquet_{column}_{op}_{threshold}{ext}")
 
     # read full table
     tbl = pq.read_table(path)
@@ -143,7 +143,6 @@ def read_parquet_sma(
     
     def build_sma_concurrently(path: str, col: str, op: str, threshold: float):
         try:
-            print(f"Building SMA for {path}")
             build_sma(path, col, op, threshold)
         except Exception as e:
             print(f"Error building SMA for {path}: {e}")
@@ -154,7 +153,6 @@ def read_parquet_sma(
         key = predicate_key(p)
         stats = get_sma(p, column, op, threshold)
         if stats is None:
-            print(f"No SMA found for {p}, building...")
             # can we afford construction cost?
             build_cost = DEPOSIT_FACTOR * avg_scan_time(key)
             if stats_manager.get_budget(key) >= build_cost:
@@ -213,6 +211,7 @@ def read_parquet_sma(
         duration = time.perf_counter() - start
 
         for p in paths_to_scan_fully:
+            print(f"Stat updated for {p}")
             key = predicate_key(p)
             stats_manager.record_scan(key, duration)
             stats_manager.add_budget(key, DEPOSIT_FACTOR * duration)
@@ -221,17 +220,15 @@ def read_parquet_sma(
 
     # deconstruct stale indexes
     # delete any .sma with B_key<0 or zero skip/outlier in last N scans
-    N = 5
     for index, stats in stats_manager.stats['files'].items():
-        if (stats['scan_count'] >= N and 
+        if (stats['scan_count'] >= LAST_N_SCANS_TO_KEEP and 
             (stats['skipped_count'] == 0 and stats['outlier_retrieved_count'] == 0) or
-            (query_id - stats['last_sma_used_query_id'] > N)):
+            (query_id - stats['last_sma_used_query_id'] > LAST_N_SCANS_TO_KEEP)):
             sma_file = os.path.join(BASE_FOLDER, f"{index}.sma")
             if os.path.exists(sma_file):
                 os.remove(sma_file)
                 print(f"Deleted stale index {sma_file}")
                 stats_manager.record_deconstruction(index)
-            stats['scan_count'] = stats['skipped_count'] = stats['outlier_retrieved_count'] = 0
     
     stats_manager.save()
     return res

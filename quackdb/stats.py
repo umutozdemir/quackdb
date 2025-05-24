@@ -89,6 +89,7 @@ class StatsManager:
 
     def record_deconstruction(self, key: str):
         """Record that an index was deconstructed for the given predicate key."""
+        print(f"Deconstructing index for {key}")
         with self.lock:
             fm = self.stats.setdefault('files', {}).setdefault(key, {
                 'scan_count': 0,
@@ -124,6 +125,7 @@ class StatsManager:
                 'deconstruction_count': 0
             })
             fm['scan_count'] += 1
+            print(f"Scan count: {fm['scan_count']}")
             fm['total_scan_time'] += scan_time
             fm['last_scan_time'] = scan_time
             if skipped or outlier:
