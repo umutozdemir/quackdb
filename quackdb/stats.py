@@ -18,15 +18,20 @@ class StatsManager:
                 "skipped_count": int,
                 "outlier_retrieved_count": int,
                 "total_scan_time": float,
-                "last_scan_time": float
+                "last_scan_time": float,
+                "last_parquet_scanned_query_id": int,
+                "last_sma_used_query_id": int,
+                "construction_count": int,
+                "deconstruction_count": int
             },
             ...
-        }
+        },
+        "current_query_id": int
       }
     """
     def __init__(self):
         self.lock = RLock()
-        self.stats = {"budgets": {}, "files": {}}
+        self.stats = {"budgets": {}, "files": {}, "current_query_id": 0}
         self._load()
 
     def _load(self):
@@ -37,10 +42,10 @@ class StatsManager:
                     self.stats = data
             except Exception as e:
                 print(f"Error loading stats file {STATS_FILE}: {e}")
-                self.stats = {"budgets": {}, "files": {}}
+                self.stats = {"budgets": {}, "files": {}, "current_query_id": 0}
         else:
             os.makedirs(BASE_FOLDER, exist_ok=True)
-            self.stats = {"budgets": {}, "files": {}}
+            self.stats = {"budgets": {}, "files": {}, "current_query_id": 0}
 
     def save(self):
         """Persist current stats to disk."""
@@ -59,6 +64,45 @@ class StatsManager:
             b = self.get_budget(key) + amount
             self.stats.setdefault('budgets', {})[key] = b
 
+    def get_next_query_id(self) -> int:
+        """Get and increment the current query ID."""
+        with self.lock:
+            query_id = self.stats["current_query_id"]
+            self.stats["current_query_id"] += 1
+            return query_id
+
+    def record_construction(self, key: str):
+        """Record that an index was constructed for the given predicate key."""
+        with self.lock:
+            fm = self.stats.setdefault('files', {}).setdefault(key, {
+                'scan_count': 0,
+                'skipped_count': 0,
+                'outlier_retrieved_count': 0,
+                'total_scan_time': 0.0,
+                'last_scan_time': 0.0,
+                'last_parquet_scanned_query_id': 0,
+                'last_sma_used_query_id': 0,
+                'construction_count': 0,
+                'deconstruction_count': 0
+            })
+            fm['construction_count'] = fm.get('construction_count', 0) + 1
+
+    def record_deconstruction(self, key: str):
+        """Record that an index was deconstructed for the given predicate key."""
+        with self.lock:
+            fm = self.stats.setdefault('files', {}).setdefault(key, {
+                'scan_count': 0,
+                'skipped_count': 0,
+                'outlier_retrieved_count': 0,
+                'total_scan_time': 0.0,
+                'last_scan_time': 0.0,
+                'last_parquet_scanned_query_id': 0,
+                'last_sma_used_query_id': 0,
+                'construction_count': 0,
+                'deconstruction_count': 0
+            })
+            fm['deconstruction_count'] = fm.get('deconstruction_count', 0) + 1
+
     def record_scan(self, key: str, scan_time: float, skipped: bool = False, outlier: bool = False):
         """
         Record a file scan event for predicate `key` on `file`:
@@ -73,15 +117,23 @@ class StatsManager:
                 'skipped_count': 0,
                 'outlier_retrieved_count': 0,
                 'total_scan_time': 0.0,
-                'last_scan_time': 0.0
+                'last_scan_time': 0.0,
+                'last_parquet_scanned_query_id': 0,
+                'last_sma_used_query_id': 0,
+                'construction_count': 0,
+                'deconstruction_count': 0
             })
             fm['scan_count'] += 1
             fm['total_scan_time'] += scan_time
             fm['last_scan_time'] = scan_time
+            if skipped or outlier:
+                fm['last_sma_used_query_id'] = self.stats["current_query_id"]
             if skipped:
                 fm['skipped_count'] += 1
-            if outlier:
+            elif outlier:
                 fm['outlier_retrieved_count'] += 1
+            else:
+                fm['last_parquet_scanned_query_id'] = self.stats["current_query_id"]
 
 # singleton instance
 stats_manager = StatsManager()
