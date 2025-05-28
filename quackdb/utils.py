@@ -12,7 +12,7 @@ _WHERE = re.compile(
     re.IGNORECASE
 )
 
-def extract_query_parts(sql: str) -> Optional[Tuple[List[str], Optional[List[str]], Optional[str], Optional[str], Optional[float]]]:
+def parse_sql(sql: str) -> Optional[Tuple[List[str], Optional[List[str]], Optional[str], Optional[str], Optional[float]]]:
     """
     Returns (files, projection_columns, filter_column, operator, value)
     projection_columns is None if '*' or not found.
