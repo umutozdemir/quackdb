@@ -177,7 +177,6 @@ def read_parquet_sma(
             stats_manager.add_budget(key, skip_bonus)
             continue
         # outlier-only check
-        print(f"stats: {stats['upper_threshold']} {stats['lower_threshold']}")
         if (
             (op == '>' and threshold > stats['upper_threshold']) or
             (op == '<' and threshold < stats['lower_threshold'])
