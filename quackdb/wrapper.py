@@ -1,7 +1,7 @@
 import duckdb
 import pyarrow as pa
 from .core import read_parquet_sma
-from .utils import extract_query_parts
+from .utils import parse_sql
 
 _conn = duckdb.connect()
 
@@ -10,7 +10,7 @@ def sql(query: str) -> pa.Table:
     Run SQL through DuckDB, but intercept Parquet queries to apply SMA skipping/outliers.
     Returns a pyarrow.Table by default.
     """
-    parts = extract_query_parts(query)
+    parts = parse_sql(query)
     if parts:
         files, proj, col, op, val = parts
         if col and op and val is not None:

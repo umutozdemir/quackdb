@@ -4,15 +4,15 @@ from typing import Optional, List, Tuple
 # Regex to extract projection, parquet files, and predicate
 _SELECT = re.compile(r"SELECT\s+(.*?)\s+FROM", re.IGNORECASE)
 _FROM_PQ = re.compile(
-    r"FROM\s+read_parquet\(\[(?:'([^']+\.parquet)'(?:,\s*'([^']+\.parquet)')*)\]\)",
+    r"FROM\s+read_parquet\(\[([^\]]+)\]\)",
     re.IGNORECASE
 )
 _WHERE = re.compile(
-    r"WHERE\s+([a-zA-Z_]\w*)\s*(=|>|<)\s*([0-9.]+)",
+    r"WHERE\s+([a-zA-Z_]\w*)\s*(=|>|<|>=|<=|!=)\s*([0-9.]+)",
     re.IGNORECASE
 )
 
-def extract_query_parts(sql: str) -> Optional[Tuple[List[str], Optional[List[str]], Optional[str], Optional[str], Optional[float]]]:
+def parse_sql(sql: str) -> Optional[Tuple[List[str], Optional[List[str]], Optional[str], Optional[str], Optional[float]]]:
     """
     Returns (files, projection_columns, filter_column, operator, value)
     projection_columns is None if '*' or not found.
@@ -28,7 +28,16 @@ def extract_query_parts(sql: str) -> Optional[Tuple[List[str], Optional[List[str
     m_from = _FROM_PQ.search(sql)
     if not m_from:
         return None
-    files = [g for g in m_from.groups() if g]
+    
+    # Extract the content inside the brackets
+    files_content = m_from.group(1)
+    
+    # Split by comma and clean up each file path
+    files = []
+    for file_part in files_content.split(','):
+        # Strip whitespace and remove quotes if present
+        file_path = file_part.strip().strip("'\"")
+        files.append(file_path)
     # predicate
     m_wh = _WHERE.search(sql)
     if m_wh:
