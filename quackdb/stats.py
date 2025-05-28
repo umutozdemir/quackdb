@@ -41,7 +41,7 @@ class StatsManager:
                     data = json.load(f)
                     self.stats = data
             except Exception as e:
-                print(f"Error loading stats file {STATS_FILE}: {e}")
+                # print(f"Error loading stats file {STATS_FILE}: {e}")
                 self.stats = {"budgets": {}, "files": {}, "current_query_id": 0}
         else:
             os.makedirs(BASE_FOLDER, exist_ok=True)
@@ -62,6 +62,8 @@ class StatsManager:
         """Adjust budget by amount. In-memory only; call save() after queries."""
         with self.lock:
             b = self.get_budget(key) + amount
+            if b < 0:
+                b = 0
             self.stats.setdefault('budgets', {})[key] = b
 
     def get_next_query_id(self) -> int:
@@ -89,7 +91,7 @@ class StatsManager:
 
     def record_deconstruction(self, key: str):
         """Record that an index was deconstructed for the given predicate key."""
-        print(f"Deconstructing index for {key}")
+        # print(f"Deconstructing index for {key}")
         with self.lock:
             fm = self.stats.setdefault('files', {}).setdefault(key, {
                 'scan_count': 0,

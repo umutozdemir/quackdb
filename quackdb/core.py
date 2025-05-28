@@ -17,7 +17,6 @@ os.makedirs(BASE_FOLDER, exist_ok=True)
 # SPA economic model constants
 DEPOSIT_FACTOR = 0.1   # fraction of scan time we deposit after a full scan
 REINVEST_FACTOR = 0.5  # fraction of time saved we reinvest after a skip
-PROBE_PENALTY_FACTOR = 0.5  # fraction of avg scan time charged as probe cost for ineffective indexes
 LAST_N_SCANS_TO_KEEP = 5  # number of scans to keep a stale index
 
 
@@ -141,12 +140,13 @@ def read_parquet_sma(
         try:
             build_sma(path, col, op, threshold)
         except Exception as e:
-            print(f"Error building SMA for {path}: {e}")
+            # print(f"Error building SMA for {path}: {e}")
+            pass
     
     predicate_key = lambda f: f"{os.path.basename(f)}_{column}_{op}_{threshold}"
 
     for p in paths:
-        print(f"Processing {p}")
+        # print(f"Processing {p}")
         key = predicate_key(p)
         stats = get_sma(p, column, op, threshold)
         if stats is None:
@@ -170,7 +170,7 @@ def read_parquet_sma(
             (op == '>' and threshold > stats['max']) or
             (op == '<' and threshold < stats['min'])
         ):
-            print(f"Skipping {p} for {column} {op} {threshold}")
+            # print(f"Skipping {p} for {column} {op} {threshold}")
             # reinvest skip benefits - bonus is based on saved scan time
             skip_bonus = REINVEST_FACTOR * avg_scan_time(key)
             stats_manager.record_scan(key, 0.0, skipped=True)
@@ -181,7 +181,7 @@ def read_parquet_sma(
             (op == '>' and threshold > stats['upper_threshold']) or
             (op == '<' and threshold < stats['lower_threshold'])
         ):
-            print(f"Retrieving outliers for {p} for {column} {op} {threshold}")
+            # print(f"Retrieving outliers for {p} for {column} {op} {threshold}")
             # retrieve precomputed full-column outliers table
             out_tbl: pa.Table = stats['outliers']
 
@@ -198,15 +198,7 @@ def read_parquet_sma(
             continue
         else:
             # Index exists but cannot skip or use outliers - penalize it
-            # The penalty is the cost of probing the index without getting benefits
-            print(f"Index exists for {p} but provides no benefit - applying penalty")
-            
-            # Estimate probe cost as a fraction of average scan time
-            probe_cost = PROBE_PENALTY_FACTOR * avg_scan_time(key)
-            
-            # Apply penalty by reducing budget
-            stats_manager.add_budget(key, -probe_cost)
-            
+            stats_manager.add_budget(key, -stats_manager.get_budget(key))
             # file is not skipped, add to full scan list
             paths_to_scan_fully.append(p)
          
@@ -223,8 +215,9 @@ def read_parquet_sma(
         for p in paths_to_scan_fully:
             # print(f"Stat updated for {p}")
             key = predicate_key(p)
-            stats_manager.record_scan(key, duration)
-            stats_manager.add_budget(key, DEPOSIT_FACTOR * duration)
+            avg_scan_time = duration / len(paths_to_scan_fully)
+            stats_manager.record_scan(key, avg_scan_time)
+            stats_manager.add_budget(key, DEPOSIT_FACTOR * avg_scan_time)
 
         res = rel if res is None else res.union(rel)
 
@@ -252,9 +245,9 @@ def read_parquet_sma(
             should_deconstruct = True
             
         if should_deconstruct:
-            sma_file = os.path.join(BASE_FOLDER, f"{index}.sma")
+            sma_file = os.path.join(BASE_FOLDER, f"{index}.sma")    
             if os.path.exists(sma_file):
-                print(f"Deleting stale index {sma_file}")
+                # print(f"Deleting stale index {sma_file}")
                 os.remove(sma_file)
                 stats_manager.record_deconstruction(index)
     
