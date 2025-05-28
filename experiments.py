@@ -1,4 +1,3 @@
-# analysis.py
 import json, time, glob, os
 import quackdb
 import matplotlib.pyplot as plt
@@ -9,14 +8,54 @@ STATS_JSON = os.path.join(SMA_FOLDER, 'stats.json')
 
 # workload
 FILES = sorted(glob.glob("/Users/umutozdemir/Desktop/theses/data/yellow_tripdata_202*-*.parquet"))
-QUERY_LIST = [
-    # skip
-    f"SELECT * FROM read_parquet({FILES}) WHERE total_amount > 10000",
-    # outlier-only
-    f"SELECT total_amount FROM read_parquet({FILES}) WHERE total_amount > 500",
+
+# QUERY_LIST = [
+    # skip predicate for most of the file
+ #   f"SELECT payment_type, total_amount FROM read_parquet({FILES}) WHERE total_amount > 50000",
+    # outlier-predicate
+ #   f"SELECT payment_type, total_amount FROM read_parquet({FILES}) WHERE total_amount > 500",
     # full-scan
-    f"SELECT total_amount FROM read_parquet({FILES}) WHERE total_amount > 20",
-]
+ #   f"SELECT payment_type, total_amount FROM read_parquet({FILES}) WHERE total_amount > 20",
+#]
+
+def plot_results(experiment_name):
+    # plotting
+    plt.figure()
+    plt.plot(query_ids, exec_times, 'o-')    
+    plt.xlabel('Query ID')
+    plt.ylabel('Exec Time (s)')
+    plt.title(f'Execution Time {experiment_name}')
+    plt.savefig(f'exec_time_{experiment_name}.png')
+
+    plt.figure()
+    plt.plot(query_ids, skipped_counts, 'x-')
+    plt.xlabel('Query ID')
+    plt.ylabel('Skipped Files')
+    plt.title(f'Files Skipped {experiment_name}')
+    plt.savefig(f'files_skipped_{experiment_name}.png')
+
+    plt.figure()
+    for key, series in budgets_over_time.items():
+        plt.plot(query_ids, series, label=key)
+    plt.xlabel('Query ID')
+    plt.ylabel('Budget')
+    plt.title(f'Budget Evolution {experiment_name}')
+    plt.legend(fontsize='small', bbox_to_anchor=(1.05, 1), loc='upper left', borderaxespad=0.)
+    plt.tight_layout(rect=[0, 0, 0.8, 1])  # Make room for the legend
+    plt.savefig(f'budget_evolution_{experiment_name}.png', bbox_inches='tight')
+
+    plt.figure()
+    plt.plot(query_ids, built_counts, '^-', label='Built')
+    plt.plot(query_ids, pruned_counts, 'v-', label='Pruned')
+    plt.xlabel('Query ID')
+    plt.ylabel('Count')
+    plt.title(f'Index Builds vs Prunes {experiment_name}')
+    plt.legend()
+    plt.savefig(f'index_builds_vs_prunes_{experiment_name}.png')
+
+skip_predicate_experiment =  f"SELECT payment_type, total_amount FROM read_parquet({FILES}) WHERE total_amount > 50000"
+outlier_predicate_experiment =  f"SELECT payment_type, total_amount FROM read_parquet({FILES}) WHERE total_amount > 500"
+full_scan_experiment =  f"SELECT payment_type, total_amount FROM read_parquet({FILES}) WHERE total_amount > 20"
 
 # metrics containers
 query_ids = []
@@ -33,7 +72,7 @@ def load_stats():
 def run_and_record(q):
     # measure exec time
     start = time.perf_counter()
-    tbl = quackdb.sql(q)
+    quackdb.sql(q)
     dur = time.perf_counter() - start
     # load stats.json
     stats = load_stats()
@@ -52,42 +91,32 @@ def run_and_record(q):
     for key, b in stats['budgets'].items():
         budgets_over_time[key].append(b)
 
-# run workload
-for q in QUERY_LIST:
-    run_and_record(q)
-# warm the skip‐case sidecars
-for _ in range(6):
-    run_and_record(QUERY_LIST[0])
 
-# plotting
-plt.figure()
-plt.plot(query_ids, exec_times, 'o-')    
-plt.xlabel('Query ID')
-plt.ylabel('Exec Time (s)')
-plt.title('Execution Time')
-plt.show()
+def experiment_1_skip_predicate():
+    skip_predicate_experiment =  f"SELECT payment_type, total_amount FROM read_parquet({FILES}) WHERE total_amount > 50000"
+    run_and_record(skip_predicate_experiment)
 
-plt.figure()
-plt.plot(query_ids, skipped_counts, 'x-')
-plt.xlabel('Query ID')
-plt.ylabel('Skipped Files')
-plt.title('Files Skipped')
-plt.show()
+def experiment_2_outlier_predicate():
+    outlier_predicate_experiment =  f"SELECT payment_type, total_amount FROM read_parquet({FILES}) WHERE total_amount > 500"
+    run_and_record(outlier_predicate_experiment)
 
-plt.figure()
-for key, series in budgets_over_time.items():
-    plt.plot(query_ids, series, label=key)
-plt.xlabel('Query ID')
-plt.ylabel('Budget')
-plt.title('Budget Evolution')
-plt.legend(fontsize='small')
-plt.show()
+def experiment_3_full_scan():
+    full_scan_experiment =  f"SELECT payment_type, total_amount FROM read_parquet({FILES}) WHERE total_amount > 20"
+    run_and_record(full_scan_experiment)
 
-plt.figure()
-plt.plot(query_ids, built_counts, '^-', label='Built')
-plt.plot(query_ids, pruned_counts, 'v-', label='Pruned')
-plt.xlabel('Query ID')
-plt.ylabel('Count')
-plt.title('Index Builds vs Prunes')
-plt.legend()
-plt.show()
+# let the system build indexes which are helpful
+experiment_3_full_scan()
+
+# Wait for 5 minutes (300 seconds)
+import time
+time.sleep(300)
+
+for i in range(9):
+    experiment_3_full_scan()
+
+
+time.sleep(120)
+plot_results("experiment_3_full_scan")
+
+# wait for user input
+input("Press Enter to continue...")

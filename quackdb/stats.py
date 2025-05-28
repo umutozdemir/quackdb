@@ -125,7 +125,6 @@ class StatsManager:
                 'deconstruction_count': 0
             })
             fm['scan_count'] += 1
-            print(f"Scan count: {fm['scan_count']}")
             fm['total_scan_time'] += scan_time
             fm['last_scan_time'] = scan_time
             if skipped or outlier:

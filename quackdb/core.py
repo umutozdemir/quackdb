@@ -17,7 +17,7 @@ os.makedirs(BASE_FOLDER, exist_ok=True)
 # SPA economic model constants
 DEPOSIT_FACTOR = 0.1   # fraction of scan time we deposit after a full scan
 REINVEST_FACTOR = 0.5  # fraction of time saved we reinvest after a skip
-PROBE_PENALTY_FACTOR = 0.05  # fraction of avg scan time charged as probe cost for ineffective indexes
+PROBE_PENALTY_FACTOR = 0.5  # fraction of avg scan time charged as probe cost for ineffective indexes
 LAST_N_SCANS_TO_KEEP = 5  # number of scans to keep a stale index
 
 
@@ -113,10 +113,6 @@ def build_sma(
     # save stats to sma file
     with open(sma_file, 'wb') as f:
         pickle.dump(stats, f)
-
-    # Record construction
-    predicate_key = f"{base}_{column}_{op}_{threshold}"
-    stats_manager.record_construction(predicate_key)
     
     return stats
 
@@ -131,7 +127,6 @@ def read_parquet_sma(
 ) -> DuckDBPyRelation:
     res = None
     paths_to_scan_fully = []
-    paths_with_ineffective_indexes = []  # Track files with indexes that didn't help
     
     # Get a new query ID for this query
     query_id = stats_manager.get_next_query_id()
@@ -151,6 +146,7 @@ def read_parquet_sma(
     predicate_key = lambda f: f"{os.path.basename(f)}_{column}_{op}_{threshold}"
 
     for p in paths:
+        print(f"Processing {p}")
         key = predicate_key(p)
         stats = get_sma(p, column, op, threshold)
         if stats is None:
@@ -164,6 +160,8 @@ def read_parquet_sma(
                     args=(p, column, op, threshold),
                     daemon=False
                 ).start()
+                # Record construction
+                stats_manager.record_construction(key)
             # fallback to full scan now
             paths_to_scan_fully.append(p)
             continue
@@ -172,18 +170,19 @@ def read_parquet_sma(
             (op == '>' and threshold > stats['max']) or
             (op == '<' and threshold < stats['min'])
         ):
-            print(f"Skipping {p}")
+            print(f"Skipping {p} for {column} {op} {threshold}")
             # reinvest skip benefits - bonus is based on saved scan time
             skip_bonus = REINVEST_FACTOR * avg_scan_time(key)
             stats_manager.record_scan(key, 0.0, skipped=True)
             stats_manager.add_budget(key, skip_bonus)
             continue
         # outlier-only check
+        print(f"stats: {stats['upper_threshold']} {stats['lower_threshold']}")
         if (
             (op == '>' and threshold > stats['upper_threshold']) or
             (op == '<' and threshold < stats['lower_threshold'])
         ):
-            print(f"Retrieving outliers for {p}")
+            print(f"Retrieving outliers for {p} for {column} {op} {threshold}")
             # retrieve precomputed full-column outliers table
             out_tbl: pa.Table = stats['outliers']
 
@@ -223,7 +222,7 @@ def read_parquet_sma(
         duration = time.perf_counter() - start
 
         for p in paths_to_scan_fully:
-            print(f"Stat updated for {p}")
+            # print(f"Stat updated for {p}")
             key = predicate_key(p)
             stats_manager.record_scan(key, duration)
             stats_manager.add_budget(key, DEPOSIT_FACTOR * duration)
@@ -238,28 +237,27 @@ def read_parquet_sma(
         
         # Check if budget is negative
         if budget < 0:
-            print(f"Index {index} has negative budget ({budget}), marking for deconstruction")
+            # print(f"Index {index} has negative budget ({budget}), marking for deconstruction")
             should_deconstruct = True
         
         # Check if index hasn't been useful recently
-        if (file_stats['scan_count'] >= LAST_N_SCANS_TO_KEEP and 
+        elif (file_stats['scan_count'] >= LAST_N_SCANS_TO_KEEP and 
             (file_stats['skipped_count'] == 0 and file_stats['outlier_retrieved_count'] == 0)):
-            print(f"Index {index} hasn't provided benefits in {LAST_N_SCANS_TO_KEEP} scans, marking for deconstruction")
+            # print(f"Index {index} hasn't provided benefits in {LAST_N_SCANS_TO_KEEP} scans, marking for deconstruction")
             should_deconstruct = True
+            # stats_manager.add_budget(index, -budget)
             
         # Check if index hasn't been used recently
-        if (query_id - file_stats['last_sma_used_query_id'] > LAST_N_SCANS_TO_KEEP):
-            print(f"Index {index} hasn't been used in {LAST_N_SCANS_TO_KEEP} queries, marking for deconstruction")
+        elif (query_id - file_stats['last_sma_used_query_id'] > LAST_N_SCANS_TO_KEEP):
+            # print(f"Index {index} hasn't been used in {LAST_N_SCANS_TO_KEEP} queries, marking for deconstruction")
             should_deconstruct = True
             
         if should_deconstruct:
             sma_file = os.path.join(BASE_FOLDER, f"{index}.sma")
             if os.path.exists(sma_file):
+                print(f"Deleting stale index {sma_file}")
                 os.remove(sma_file)
-                print(f"Deleted stale index {sma_file}")
                 stats_manager.record_deconstruction(index)
-                # Reset budget to 0 after deconstruction
-                # stats_manager.add_budget(index, -budget)
     
     stats_manager.save()
     return res
